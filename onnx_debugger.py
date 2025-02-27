@@ -62,15 +62,62 @@ def check_onnx_conversion(model, input_shape=(3, 32, 32), batch_size=1, toleranc
             "type": "conversion_error",
             "message": f"Conversion failed: {error_msg}"
         })
-# ADD MORE PROBLEMATIC LAYERS HERE
+
         # Check for common error patterns
         error_patterns = {
-            "No conversion for operator": "Model uses unsupported operations",
-            "Sizes of tensors must match": "Dimension mismatch in operations",
-            "dynamic": "Dynamic shape issue",
-            "view": "Issue with reshape/view operation",
-            "Converting a tensor to a Python boolean": "Tensor dimension used in conditional statement",
-            "TracerWarning": "Tracing issue that may lead to incorrect ONNX model"
+            # Node conversion errors - primary conversion issues
+            "No conversion for operator": "Model uses unsupported operations (common node conversion error)",
+            "Sizes of tensors must match": "Dimension mismatch in operations (common node conversion error)",
+            "dynamic": "Dynamic shape issue (common in graph tracing)",
+            "view": "Issue with reshape/view operation (frequently fails in ONNX conversion)",
+            "reshape": "Issue with reshape operation (common source of incompatibility)",
+            "Converting a tensor to a Python boolean": "Tensor dimension used in conditional statement (causes tracing failures)",
+            "expected scalar type": "Data type mismatch during conversion (type problem)",
+            "Overflow": "Numeric overflow during conversion (precision issue)",
+            
+            # Tensor operation issues
+            "unbind": "Issue with tensor unbind operation (often problematic in ONNX)",
+            "scatter": "Issue with scatter/gather operations (limited support in ONNX)",
+            "indices": "Problem with index-based operations (different behavior in ONNX)",
+            "broadcast": "Broadcasting dimension mismatch (incompatible broadcasting rules)",
+            "symbolic shape": "Unable to determine symbolic shape (dynamic shape issue)",
+            "transpose": "Issue with tensor permutation (often requires explicit reshaping)",
+            "slice": "Problem with slice operations (differences in slice semantics)",
+            
+            # Unsupported features and operations
+            "unsupported": "Unsupported operation or attribute (check ONNX operator support)",
+            "LSTM": "Issue with LSTM or RNN conversion (often requires special handling)",
+            "RNN": "Issue with RNN conversion (limited compatibility)",
+            "GRU": "Issue with GRU conversion (may need simplified architecture)",
+            "inplace": "Inplace operation causing conversion issue (not supported in ONNX graph)",
+            "getitem": "Problem with tensor indexing (different semantics in ONNX)",
+            "matmul": "Matrix multiplication issue (dimension or type mismatch)",
+            "NaN": "Not-a-number values detected (numerical stability issue)",
+            
+            # Tracing and graph conversion issues
+            "torch.jit.trace": "Tracing failed to capture dynamic operations (try script mode instead)",
+            "must be constant": "Expected constant value but found dynamic input (graph construction issue)",
+            "Incompatible type promotion": "Type conversion incompatibility between operators (common in mixed precision models)",
+            "overload resolution": "Ambiguous operator overload resolution (not properly traced)",
+            
+            # Specific operator issues (found in paper to cause problems)
+            "topk": "Issue with topk operation (dynamic k values are problematic)",
+            "softmax": "Issue with softmax operation (dimension handling issues)",
+            "pooling": "Issue with pooling operation (padding or dimension mismatch)",
+            "padding": "Issue with padding operation (inconsistent padding rules)",
+            "Not implemented": "ONNX operator not implemented for this version (check opset compatibility)",
+            "only supports": "Unsupported operator parameter or configuration (limited ONNX support)",
+            "expected a single value": "Expected scalar but received tensor (type mismatch)",
+            "Opset version": "Operator not supported in selected ONNX opset version (try updating opset)",
+            "name already exists": "Duplicate node names in ONNX graph (naming conflict in conversion)",
+            "Type Error": "Type mismatch between PyTorch and ONNX operators (conversion incompatibility)",
+            "inputs are non-homogeneous": "Different input types for operation (type uniformity required)",
+            
+            # Operator sequence issues (identified in research)
+            "sequential module": "Issues in sequential layer conversion (check layer sequence compatibility)",
+            "graph optimization": "Graph optimization failed (complex operator sequence issue)",
+            "operator fusion": "Operator fusion issue (problematic operator combinations)",
+            "custom layer": "Custom layer conversion failed (not supported in ONNX)"
         }
         
         for pattern, explanation in error_patterns.items():
