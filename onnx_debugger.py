@@ -35,7 +35,7 @@ def print_test_results(results):
     print("\n" + "="*60)
 
 
-def test_onnx_compatibility(model, input_shape=None, batch_size=1):
+def onnx_debugger(model, input_shape=None, batch_size=1):
     """
     Test a PyTorch model for ONNX compatibility and print results.
     
@@ -79,4 +79,4 @@ if __name__ == "__main__":
     model = DetectableIssuesModel()
     
     # MNIST images are 1x28x28
-    test_onnx_compatibility(model, input_shape=(3, 32, 32))
+    onnx_debugger(model, input_shape=(3, 32, 32))
