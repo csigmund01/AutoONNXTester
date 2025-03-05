@@ -1,174 +1,142 @@
 import torch
-import io
-from contextlib import redirect_stdout, redirect_stderr
+import inspect
+import warnings
+import re
 
-
-def static_model_analysis(model, input_shape=(3, 32, 32), batch_size=1):
+def static_model_analysis(model, input_shape=(3, 224, 224), batch_size=1):
     """
-    Analysis of model's forward method for common ONNX conversion issues
-    using both static inspection and dynamic tracing approaches.
+    Focused static analysis of PyTorch model for critical ONNX conversion issues.
     
     Args:
         model: PyTorch model to analyze
-        input_shape: Shape of input tensor (excluding batch dimension)
+        input_shape: Shape of expected input tensor (excluding batch dimension)
         batch_size: Batch size for test input
+    
+    Returns:
+        Dictionary with model_name and list of high-confidence issues
     """
-    issues = []
+    result = {
+        "model_name": type(model).__name__,
+        "issues": []
+    }
     
-    # Part 1: Static analysis of source code (if available)
-    import inspect
+    seen_warnings = set()  # Track unique warnings to avoid duplicates
     
-    # Check for forward method existence
-    if not hasattr(model, 'forward') or not callable(model.forward):
-        issues.append({
-            "message": "Cannot access model's forward method",
-            "suggestion": "Ensure the model has a properly defined forward method"
-        })
-    else:
-        # Try to inspect the source code
-        try:
-            source = inspect.getsource(model.forward)
+    # Analyze model structure first to prioritize critical issues
+    model_modules = {name: module for name, module in model.named_modules()}
+    
+    # Step 1: Look for conditional statements based directly on input dimensions
+    for name, module in model_modules.items():
+        if not hasattr(module, 'forward') or not callable(module.forward):
+            continue
             
-            # Check for common issues (simple text-based approach)
-            if "if " in source and any(x in source for x in ["x.", "input", "size", "shape"]):
-                issues.append({
-                    "message": "Dynamic control flow detected in forward method",
-                    "suggestion": "Avoid using input dimensions in conditional statements"
+        try:
+            source = inspect.getsource(module.forward)
+            
+            # Look specifically for conditional statements acting on input dimensions
+            input_condition_pattern = re.compile(
+                r'if\s+.*?(?:x\.shape|input\.shape|x\.size\(\)|x\.dim\(\))'
+            )
+            
+            if input_condition_pattern.search(source):
+                result["issues"].append({
+                    "message": f"Dynamic control flow based on input dimensions in {name}.forward()",
+                    "suggestion": "Replace conditional statements depending on input dimensions with static logic"
                 })
+            
+            # Look for dynamic reshaping using variable dimensions
+            dynamic_reshape_pattern = re.compile(
+                r'(?:\.view|\.reshape|\.flatten)\(.*?(?:shape\[|size\(|\.dim)'
+            )
+            
+            if dynamic_reshape_pattern.search(source):
+                result["issues"].append({
+                    "message": f"Dynamic reshaping with variable dimensions in {name}.forward()",
+                    "suggestion": "Use fixed dimensions in reshape/view operations"
+                })
+            
+            # Only flag specific problematic operations that are known to cause issues
+            high_risk_ops = {
+                r'torch\.unbind\(': "Unbind operation",
+                r'torch\.where\(.*?\.shape': "Dynamic conditional operation using shapes",
+                r'torch\.nonzero\(': "Nonzero operation", 
+                r'\.scatter\(': "Scatter operation",
+                r'torch\.topk\(.*?\d+.*?\)': "TopK with dynamic k value"
+            }
+            
+            for pattern, message in high_risk_ops.items():
+                op_pattern = re.compile(pattern)
+                if op_pattern.search(source):
+                    result["issues"].append({
+                        "message": f"{message} in {name}.forward() that frequently fails in ONNX conversion",
+                        "suggestion": "Replace with ONNX-compatible alternatives"
+                    })
+            
+        except Exception:
+            # Skip modules we can't inspect without raising errors
+            pass
+    
+    # Step 2: Test tracing to catch confirmation of critical issues
+    try:
+        dummy_input = torch.randn(batch_size, *input_shape)
+        model.eval()  # Ensure model is in evaluation mode
+        
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            
+            # Use script mode which is more thorough in catching dynamic issues
+            try:
+                torch.jit.script(model)
+            except:
+                # If script fails, try trace
+                torch.jit.trace(model, dummy_input)
+            
+            # Filter for critical warnings that strongly indicate conversion will fail
+            critical_patterns = [
+                "Converting a tensor to a Python boolean",
+                "Cannot determine the shape statically",
+                "has a dynamic dimension",
+                "Expected isFloatingPoint for argument",
+                "Expected a constant value"
+            ]
+            
+            for warning in w:
+                warning_msg = str(warning.message)
+                # Deduplicate similar warnings
+                warning_key = warning_msg[:100]  # Use first 100 chars as fingerprint
                 
-            if ".view(" in source or ".reshape(" in source:
-                issues.append({
-                    "message": "Dynamic reshaping operations may cause issues",
-                    "suggestion": "Use fixed dimensions when possible"
-                })
-        except Exception as e:
-            issues.append({
-                "message": f"Could not inspect forward method source: {str(e)}",
-                "suggestion": "Model may use a built-in or compiled forward method"
+                if warning_key in seen_warnings:
+                    continue
+                    
+                seen_warnings.add(warning_key)
+                
+                # Only report warnings that are highly indicative of conversion failures
+                if any(pattern in warning_msg for pattern in critical_patterns):
+                    result["issues"].append({
+                        "message": f"Critical tracing issue: {warning_msg}",
+                        "suggestion": "This warning indicates potential ONNX conversion failure"
+                    })
+    
+    except Exception as e:
+        # If tracing completely fails, that's a strong indicator
+        error_msg = str(e)
+        
+        # Check for common error patterns that definitely mean conversion will fail
+        if any(pattern in error_msg for pattern in [
+            "Expected a Tensor",
+            "Expected isFloatingPoint",
+            "Expected a constant",
+            "dictionary construction",
+            "Cannot determine the shape",
+            "Cannot call a value"
+        ]):
+            result["issues"].append({
+                "message": f"Model tracing failed: {error_msg}",
+                "suggestion": "This error confirms the model will likely fail ONNX conversion"
             })
     
-    # Part 2: Dynamic analysis using PyTorch's JIT tracing
-    try:
-        # Create an input tensor for tracing the model
-        input_tensor = torch.randn((batch_size,) + input_shape)
-        
-        # Set model to evaluation mode before tracing
-        model.eval()
-        
-        # Capture stdout/stderr during tracing to analyze warnings
-        output_capture = io.StringIO()
-        with redirect_stdout(output_capture), redirect_stderr(output_capture):
-            # Create a traced version of the model
-            traced_model = torch.jit.trace(model, input_tensor)
-        
-        # Get the trace output and graph representation
-        trace_output = output_capture.getvalue().lower()
-        graph_representation = str(traced_model.graph)
-        
-        # Integrated issue detection for both trace warnings and graph operations
-        onnx_issue_patterns = {
-            # Warning patterns from trace output
-            "dynamic": {
-                "source": "trace_warning",
-                "message": "Dynamic operations or control flow detected",
-                "suggestion": "These often cause problems with ONNX export. Consider replacing with static operations.",
-                "related_ops": ["prim::If", "aten::_shape_as_tensor"]
-            },
-            "shape": {
-                "source": "trace_warning",
-                "message": "Shape inference issues",
-                "suggestion": "Shape-dependent operations may not export correctly. Use fixed shapes when possible.",
-                "related_ops": ["aten::_shape_as_tensor", "aten::reshape", "aten::view"]
-            },
-            "not supported": {
-                "source": "trace_warning",
-                "message": "Potentially unsupported operations",
-                "suggestion": "Some PyTorch operations don't have ONNX equivalents. Consider alternatives if export fails.",
-                "related_ops": []
-            },
-            "fallback": {
-                "source": "trace_warning",
-                "message": "Operator fallback warnings",
-                "suggestion": "Fallback operators may not convert properly to ONNX.",
-                "related_ops": []
-            },
-            "deprecated": {
-                "source": "trace_warning",
-                "message": "Use of deprecated operations",
-                "suggestion": "Replace deprecated operations with their modern equivalents.",
-                "related_ops": []
-            },
-            "tensor size": {
-                "source": "trace_warning",
-                "message": "Dynamic tensor sizing issues",
-                "suggestion": "Dynamic sizing can cause problems. Try to use fixed dimensions.",
-                "related_ops": ["aten::_shape_as_tensor", "aten::reshape", "aten::view", "aten::flatten"]
-            },
-            "converting a tensor to a python boolean": {
-                "source": "trace_warning",
-                "message": "Tensor dimension used in conditional statement",
-                "suggestion": "Avoid using tensor dimensions in conditionals. Consider using torch.jit.script instead of trace, or restructure your model to avoid dynamic control flow.",
-                "related_ops": ["prim::If"]
-            },
-            
-            # Graph operation patterns
-            "aten::unbind": {
-                "source": "graph_op",
-                "message": "Dynamic slicing operation detected",
-                "suggestion": "Dynamic slicing may not translate well to ONNX. Consider alternative approaches."
-            },
-            "aten::slice": {
-                "source": "graph_op",
-                "message": "Slice operation detected",
-                "suggestion": "Dynamic slicing may not translate well to ONNX. Ensure indices are fixed."
-            },
-            "prim::listconstruct": {
-                "source": "graph_op",
-                "message": "Dynamic list creation detected",
-                "suggestion": "Dynamic list operations often cause ONNX export issues. Use fixed-size tensors when possible."
-            },
-            "aten::permute": {
-                "source": "graph_op",
-                "message": "Tensor permutation detected",
-                "suggestion": "Permutations can be tricky in ONNX. Verify the exported model handles these correctly."
-            },
-            "aten::flatten": {
-                "source": "graph_op",
-                "message": "Flatten operation detected",
-                "suggestion": "Flatten operations may cause shape issues in ONNX. Consider using Reshape with fixed dimensions."
-            },
-            "aten::_shape_as_tensor": {
-                "source": "graph_op",
-                "message": "Shape-dependent operation detected",
-                "suggestion": "Shape-dependent operations often cause ONNX export issues. Try to use fixed shapes."
-            },
-            "prim::if": {
-                "source": "graph_op",
-                "message": "Dynamic control flow detected",
-                "suggestion": "Conditional branches based on input dimensions often fail in ONNX export. Refactor to avoid dynamic control flow."
-            }
-        }
-        
-            # Ultra-concise single-loop detection
-        
-        for pattern, info in onnx_issue_patterns.items():
-            if (info["source"] == "trace_warning" and trace_output and pattern in trace_output):
-                issues.append({
-                    "message": f"JIT tracing warning: {info['message']}",
-                    "suggestion": info["suggestion"],
-                    "detail": trace_output.strip()
-                })
-            elif (info["source"] == "graph_op" and pattern.lower() in graph_representation.lower()):
-                issues.append({
-                    "message": info["message"],
-                    "suggestion": info["suggestion"]
-                })
-            
-    except Exception as e:
-        # If tracing fails, that's often a sign that ONNX conversion will fail too
-        issues.append({
-            "message": f"Tracing failed: {str(e)}",
-            "suggestion": "The model may have dynamic behavior that can't be traced, which could also cause ONNX export issues"
-        })
+    # Limit number of issues to avoid overwhelming output
+    if len(result["issues"]) > 5:
+        result["issues"] = result["issues"][:5]
     
-    return issues
+    return result
