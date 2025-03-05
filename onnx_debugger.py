@@ -1,36 +1,46 @@
 from helper_functions.test_onnx_conversion import test_onnx_conversion
 from helper_functions.static_model_analysis import static_model_analysis
+from helper_functions.compare_models import compare_models
 
+import torchvision.models as models
 
-def print_test_results(results):
-    """Print test results in a readable format"""
+def print_analysis_results(results, label="ANALYSIS RESULTS"):
+    """
+    Print a single analysis results dictionary in a readable format.
+    
+    Args:
+        results: Dictionary containing analysis results
+        label: Label to identify what kind of results are being printed
+    """
     print("\n" + "="*60)
-    print(" ONNX CONVERSION TEST RESULTS ")
+    print(f" {label} ")
     print("="*60)
     
-    print(f"\nModel: {results['model_name']}")
-    print(f"Conversion Success: {results['conversion_success']}")
-    print(f"Outputs Match: {results.get('output_match', False)}")
-    print(f"Maximum Output Difference: {results['max_difference']:.6f}")
+    # Print basic model information if available
+    # if "model_name" in results:
+    #     print(f"\nModel: {results['model_name']}")
     
-    # Print static analysis issues
-    if results.get("static_issues"):
-        print("\nSTATIC ANALYSIS ISSUES:")
-        for i, issue in enumerate(results["static_issues"], 1):
-            print(f"\nIssue {i}: {issue['message']}")
-            if issue.get('suggestion'):
-                print(f"Suggestion: {issue['suggestion']}")
+    # Print conversion status if available
+    if "conversion_success" in results:
+        print(f"Conversion Success: {results['conversion_success']}")
     
-    # Print conversion issues
-    if results.get("issues"):
-        print("\nCONVERSION ISSUES:")
+    # Print output match status if available
+    if "output_match" in results:
+        print(f"Outputs Match: {results['output_match']}")
+    
+    # Print difference metrics if available
+    if "max_difference" in results:
+        print(f"Maximum Output Difference: {results['max_difference']:.6f}")
+    
+    # Print issues if available
+    if "issues" in results and results["issues"]:
+        print("\nISSUES:")
         for i, issue in enumerate(results["issues"], 1):
-            print(f"\nIssue {i}: {issue['message']}")
+            print(f"\nIssue {i}: {issue.get('message', 'Unknown issue')}")
             if issue.get('suggestion'):
                 print(f"Suggestion: {issue['suggestion']}")
-    
-    if not results.get("static_issues") and not results.get("issues"):
-        print("\nNo issues detected! Model should work well with ONNX.")
+    else:
+        print("\nNo issues detected!")
     
     print("\n" + "="*60)
 
@@ -46,20 +56,19 @@ def onnx_debugger(model, input_shape=None, batch_size=1):
     """
     # Run static code analysis first
     static_issues = static_model_analysis(model, input_shape, batch_size)
-    
+    print_analysis_results(static_issues, "STATIC ANALYSIS RESULTS")
     # Then run conversion and inference tests
-    results = test_onnx_conversion(model, input_shape, batch_size)
+    conversion_issues = test_onnx_conversion(model, input_shape, batch_size)
+    print(conversion_issues)
+    print_analysis_results(conversion_issues, "CONVERSION ANALYSIS RESULTS")
+    if not conversion_issues["conversion_success"]:
+        return
     
-    # Add static issues separately
-    results["static_issues"] = static_issues
-    
-    # Print results
-    print_test_results(results)
-    
-    return results
+    compare_models(model, conversion_issues["onnx_path"])
 
 
-# # Example MNIST usage
+
+# Example MNIST usage
 # if __name__ == "__main__":
 #     # Import the MNIST model from separate file
 #     from models.mnist_model import MNISTClassifier
@@ -68,15 +77,11 @@ def onnx_debugger(model, input_shape=None, batch_size=1):
 #     model = MNISTClassifier()
     
 #     # MNIST images are 1x28x28
-#     test_onnx_compatibility(model, input_shape=(1, 28, 28))
+#     onnx_debugger(model, input_shape=(1, 28, 28))
 
-# Example problematic model 1 usage
 if __name__ == "__main__":
-    # Import the MNIST model from separate file
-    from models.problematic_model_1 import DetectableIssuesModel
+
+    model = models.vit_b_16(weights=models.ViT_B_16_Weights.IMAGENET1K_V1)
+    model.eval()
     
-    # Create and test the model
-    model = DetectableIssuesModel()
-    
-    # MNIST images are 1x28x28
-    onnx_debugger(model, input_shape=(3, 32, 32))
+    onnx_debugger(model, input_shape=(3, 224, 224))
