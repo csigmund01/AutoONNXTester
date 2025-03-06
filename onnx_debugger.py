@@ -81,7 +81,6 @@ def onnx_debugger(model, input_shape=None, batch_size=1):
 
 if __name__ == "__main__":
 
-    model = models.vit_b_16(weights=models.ViT_B_16_Weights.IMAGENET1K_V1)
-    model.eval()
+    model = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
     
     onnx_debugger(model, input_shape=(3, 224, 224))

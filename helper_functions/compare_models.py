@@ -6,7 +6,7 @@ import onnxruntime as ort
 import numpy as np
 from typing import List, Tuple, Dict, Any
 from tqdm import tqdm
-
+import time
 
 def compare_models(
     pytorch_model: nn.Module,
@@ -44,8 +44,9 @@ def compare_models(
     pytorch_model = pytorch_model.to(device)
     pytorch_model.eval()
     
-    # Set up ONNX runtime session
-    ort_session = ort.InferenceSession(onnx_model_path)
+    # Set up ONNX runtime session with GPU provider if available
+    providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if device == 'cuda' else ['CPUExecutionProvider']
+    ort_session = ort.InferenceSession(onnx_model_path, providers=providers)
     input_name = ort_session.get_inputs()[0].name
     
     # ViT preprocessing for CIFAR-10
@@ -58,7 +59,7 @@ def compare_models(
     # Load CIFAR-10 test dataset
     test_dataset = datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
     test_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=batch_size, shuffle=True, num_workers=2
+        test_dataset, batch_size=128, shuffle=True, num_workers=2
     )
     
     # CIFAR-10 class names
@@ -81,21 +82,19 @@ def compare_models(
             pytorch_outputs = pytorch_model(images.to(device))
             pytorch_predictions = torch.argmax(pytorch_outputs, dim=1).cpu().numpy()
         
-        # Process each image one by one for ONNX
-        for i, (image, label) in enumerate(zip(images, labels)):
+        # ONNX batch inference
+        onnx_outputs = ort_session.run(None, {input_name: images.numpy()})
+        onnx_predictions = np.argmax(onnx_outputs[0], axis=1)
+        
+        # Process each image in the batch
+        for i, (image, label, pytorch_pred, onnx_pred) in enumerate(
+            zip(images, labels, pytorch_predictions, onnx_predictions)
+        ):
             # Skip if we have enough samples of both types
             if (len(matching_samples) >= num_matching_samples and 
                 len(differing_samples) >= num_differing_samples):
                 break
                 
-            # Prepare input for ONNX model (add batch dimension)
-            onnx_input = image.unsqueeze(0).numpy()
-            
-            # ONNX forward pass
-            onnx_outputs = ort_session.run(None, {input_name: onnx_input})
-            onnx_prediction = np.argmax(onnx_outputs[0], axis=1)[0]
-            
-            pytorch_prediction = pytorch_predictions[i]
             true_label = label.item()
             
             # Create basic sample info
@@ -107,7 +106,7 @@ def compare_models(
             }
             
             # Check if predictions match
-            if pytorch_prediction == onnx_prediction:
+            if pytorch_pred == onnx_pred:
                 if len(matching_samples) < num_matching_samples:
                     matching_samples.append(sample_info)
             else:
@@ -118,73 +117,25 @@ def compare_models(
     return matching_samples, differing_samples
 
 
-def visualize_samples(
-    matching_samples: List[Dict[str, Any]],
-    differing_samples: List[Dict[str, Any]],
-    num_samples: int = 5
-):
-    """
-    Visualize a few examples from each category of samples
-    
-    Args:
-        matching_samples: List of samples where models agree
-        differing_samples: List of samples where models disagree
-        num_samples: Number of samples to visualize from each category
-    """
-    import matplotlib.pyplot as plt
-    
-    # Inverse normalization function for our transforms
-    inv_normalize = transforms.Normalize(
-        mean=[-0.5/0.5, -0.5/0.5, -0.5/0.5],
-        std=[1/0.5, 1/0.5, 1/0.5]
-    )
-    
-    # Helper function to display an image
-    def show_image(ax, sample, title):
-        img = inv_normalize(sample['image_tensor']).permute(1, 2, 0).clip(0, 1)
-        ax.imshow(img)
-        ax.set_title(title)
-        ax.axis('off')
-    
-    # Show matching samples
-    if matching_samples:
-        fig, axes = plt.subplots(1, min(num_samples, len(matching_samples)), figsize=(15, 4))
-        if num_samples == 1 or len(matching_samples) == 1:
-            axes = [axes]
-        for i, sample in enumerate(matching_samples[:num_samples]):
-            title = f"True: {sample['true_class']}"
-            show_image(axes[i], sample, title)
-        plt.suptitle("Samples where PyTorch and ONNX models agree")
-        plt.tight_layout()
-        plt.show()
-    
-    # Show differing samples
-    if differing_samples:
-        fig, axes = plt.subplots(1, min(num_samples, len(differing_samples)), figsize=(15, 4))
-        if num_samples == 1 or len(differing_samples) == 1:
-            axes = [axes]
-        for i, sample in enumerate(differing_samples[:num_samples]):
-            title = f"True: {sample['true_class']}"
-            show_image(axes[i], sample, title)
-        plt.suptitle("Samples where PyTorch and ONNX models disagree")
-        plt.tight_layout()
-        plt.show()
-
-
 # Example usage:
 if __name__ == "__main__":
     import torchvision.models as models
     import os
     
+    # Set device
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f"Using device: {device}")
+    
     # Load pre-trained ViT model
-    model = models.vit_b_16(weights=models.ViT_B_16_Weights.IMAGENET1K_V1)
+    model = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
+    model.to(device)
     model.eval()
     
     # Convert to ONNX if needed
     onnx_model_path = "vit_b_16.onnx"
     if not os.path.exists(onnx_model_path):
         print("Converting PyTorch model to ONNX...")
-        dummy_input = torch.randn(1, 3, 224, 224)  # ViT requires 224x224 input
+        dummy_input = torch.randn(1, 3, 224, 224, device=device)
         torch.onnx.export(
             model, 
             dummy_input, 
@@ -199,8 +150,6 @@ if __name__ == "__main__":
     # Compare models
     matching_samples, differing_samples = compare_models(
         pytorch_model=model,
-        onnx_model_path=onnx_model_path
+        onnx_model_path=onnx_model_path,
+        device=device
     )
-    
-    # Visualize results
-    visualize_samples(matching_samples, differing_samples)
