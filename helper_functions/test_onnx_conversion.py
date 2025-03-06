@@ -20,8 +20,12 @@ def convert_to_onnx(model, input_shape=(3, 224, 224), batch_size=1):
     # Set model to evaluation mode
     model.eval()
     
+    # Check for CUDA availability
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+    
     # Create random input tensor
-    input_tensor = torch.randn((batch_size,) + input_shape)
+    input_tensor = torch.randn((batch_size,) + input_shape).to(device)
     
     # Initialize results
     results = {
@@ -29,7 +33,8 @@ def convert_to_onnx(model, input_shape=(3, 224, 224), batch_size=1):
         "conversion_success": False,
         "issues": [],
         "input_tensor": input_tensor,
-        "onnx_path": "temp_model.onnx"
+        "onnx_path": "temp_model.onnx",
+        "device": device
     }
     
     # Step 1: Convert model to ONNX
@@ -173,6 +178,7 @@ def test_inference_match(model, conversion_results, tolerance=1e-5):
         
     input_tensor = results["input_tensor"]
     onnx_path = results["onnx_path"]
+    device = results["device"]
     
     # Step 2: Run both PyTorch and ONNX inference to check for output discrepancies
     try:
@@ -185,13 +191,14 @@ def test_inference_match(model, conversion_results, tolerance=1e-5):
             pytorch_output = pytorch_output[0]  
             
         # ONNX inference
-        session = ort.InferenceSession(onnx_path)
+        providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if torch.cuda.is_available() else ['CPUExecutionProvider']
+        session = ort.InferenceSession(onnx_path, providers=providers)
         input_name = session.get_inputs()[0].name
         output_name = session.get_outputs()[0].name
-        onnx_output = session.run([output_name], {input_name: input_tensor.numpy()})[0]
+        onnx_output = session.run([output_name], {input_name: input_tensor.cpu().numpy()})[0]
         
         # Compare outputs
-        pytorch_np = pytorch_output.detach().numpy()
+        pytorch_np = pytorch_output.detach().cpu().numpy()
         
         # Check shape match (TSS issue)
         if pytorch_np.shape != onnx_output.shape:
@@ -324,5 +331,7 @@ def test_onnx_conversion(model, input_shape=(3, 224, 224), batch_size=1, toleran
     # Remove intermediate fields before returning
     if "input_tensor" in final_results:
         del final_results["input_tensor"]
+    if "device" in final_results:
+        del final_results["device"]
         
     return final_results
