@@ -1,5 +1,5 @@
+#from helper_functions.static_model_analysis import static_model_analysis
 from helper_functions.convert_to_onnx import convert_to_onnx
-from helper_functions.static_model_analysis import static_model_analysis
 from helper_functions.compare_models import compare_models
 
 import torchvision.models as models
@@ -18,14 +18,6 @@ def print_analysis_results(results, label="ANALYSIS RESULTS"):
 
     if "conversion_success" in results:
         print(f"Conversion Success: {results['conversion_success']}")
-    
-    # Print output match status if available
-    if "output_match" in results:
-        print(f"Outputs Match: {results['output_match']}")
-    
-    # Print difference metrics if available
-    if "max_difference" in results:
-        print(f"Maximum Output Difference: {results['max_difference']:.6f}")
     
     # Print issues if available
     if "issues" in results and results["issues"]:
@@ -61,7 +53,7 @@ def onnx_debugger(model, input_shape=None, batch_size=1):
         return
     
     compare_models(model, conversion_issues["onnx_path"])
-    
+
 
 if __name__ == "__main__":
 

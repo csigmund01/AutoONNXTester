@@ -28,7 +28,7 @@ def convert_to_onnx(model, input_shape=(3, 224, 224), batch_size=1):
         "model_name": type(model).__name__,
         "conversion_success": False,
         "issues": [],
-        "onnx_path": "temp_model.onnx",
+        "onnx_path": "converted_model.onnx",
         "device": device
     }
     

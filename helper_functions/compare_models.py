@@ -13,7 +13,7 @@ def compare_models(
     onnx_model_path: str,
     num_matching_samples: int = 100,
     num_differing_samples: int = 100,
-    batch_size: int = 32,
+    batch_size: int = 128,
     device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
@@ -59,7 +59,7 @@ def compare_models(
     # Load CIFAR-10 test dataset
     test_dataset = datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
     test_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=128, shuffle=True, num_workers=2
+        test_dataset, batch_size=batch_size, shuffle=True, num_workers=2
     )
     
     # CIFAR-10 class names
@@ -120,36 +120,12 @@ def compare_models(
 # Example usage:
 if __name__ == "__main__":
     import torchvision.models as models
-    import os
-    
-    # Set device
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f"Using device: {device}")
     
     # Load pre-trained ViT model
     model = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
-    model.to(device)
-    model.eval()
-    
-    # Convert to ONNX if needed
-    onnx_model_path = "vit_b_16.onnx"
-    if not os.path.exists(onnx_model_path):
-        print("Converting PyTorch model to ONNX...")
-        dummy_input = torch.randn(1, 3, 224, 224, device=device)
-        torch.onnx.export(
-            model, 
-            dummy_input, 
-            onnx_model_path,
-            input_names=['input'],
-            output_names=['output'],
-            dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}},
-            opset_version=14
-        )
-        print(f"Model exported to {onnx_model_path}")
-    
+    onnx_model_path = "converted_model.onnx"
     # Compare models
     matching_samples, differing_samples = compare_models(
         pytorch_model=model,
         onnx_model_path=onnx_model_path,
-        device=device
     )
