@@ -56,7 +56,9 @@ def onnx_debugger(model, input_shape=None, batch_size=1):
 
 
 if __name__ == "__main__":
-
+    import torchvision.models as models
+    
+    # Load pre-trained ViT model
     model = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
     
     onnx_debugger(model, input_shape=(3, 224, 224))

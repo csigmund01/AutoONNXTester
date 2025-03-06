@@ -6,7 +6,6 @@ import onnxruntime as ort
 import numpy as np
 from typing import List, Tuple, Dict, Any
 from tqdm import tqdm
-import time
 
 def compare_models(
     pytorch_model: nn.Module,
@@ -49,7 +48,6 @@ def compare_models(
     ort_session = ort.InferenceSession(onnx_model_path, providers=providers)
     input_name = ort_session.get_inputs()[0].name
     
-    # ViT preprocessing for CIFAR-10
     transform = transforms.Compose([
         transforms.Resize(224),  # ViT requires 224x224 input
         transforms.ToTensor(),
@@ -102,7 +100,11 @@ def compare_models(
                 'image_idx': i,
                 'image_tensor': image,
                 'true_label': true_label,
-                'true_class': id_to_label.get(true_label, f"class_{true_label}")
+                'true_class': id_to_label.get(true_label, f"class_{true_label}"),
+                'pytorch_pred_label': pytorch_pred,
+                'pytorch_pred': id_to_label.get(pytorch_pred, f"class_{pytorch_pred}"),
+                'onnx_pred_label': onnx_pred,
+                'onnx_pred': id_to_label.get(onnx_pred, f"class_{onnx_pred}")
             }
             
             # Check if predictions match
@@ -117,15 +119,63 @@ def compare_models(
     return matching_samples, differing_samples
 
 
-# Example usage:
+
+def display_differing_predictions(differing_samples, n=4, save_path="model_differences.png"):
+    """Display a grid of images where PyTorch and ONNX models disagree."""
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    # Handle the case when there are no differing samples
+    if not differing_samples:
+        print("No differing samples found to display.")
+        return
+    
+    # Handle the case when there are few samples
+    n = min(n, len(differing_samples))
+    
+    # Create figure with subplots
+    fig, axes = plt.subplots(1, n, figsize=(4*n, 3))
+    
+    # Make axes a list even if there's only one subplot
+    if n == 1:
+        axes = [axes]
+    
+    for i, sample in enumerate(differing_samples[:n]):
+        # Get image and denormalize
+        img = sample['image_tensor'].numpy().transpose(1, 2, 0)
+        
+        # For CIFAR-10 with mean=(0.4914, 0.4822, 0.4465), std=(0.2470, 0.2435, 0.2616)
+        mean = np.array([0.4914, 0.4822, 0.4465]).reshape(1, 1, 3)
+        std = np.array([0.2470, 0.2435, 0.2616]).reshape(1, 1, 3)
+        img = img * std + mean
+        
+        # Ensure values are within valid range
+        img = np.clip(img, 0, 1)
+        
+        axes[i].imshow(img)
+        axes[i].set_title(f"True: {sample['true_class']}\nPyTorch: {sample['pytorch_pred']}\nONNX: {sample['onnx_pred']}")
+        axes[i].axis('off')
+    
+    plt.tight_layout()
+    plt.savefig(save_path, bbox_inches='tight', dpi=300)
+    plt.show()
+
+# Example usage
 if __name__ == "__main__":
     import torchvision.models as models
     
     # Load pre-trained ViT model
     model = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
     onnx_model_path = "converted_model.onnx"
-    # Compare models
+
     matching_samples, differing_samples = compare_models(
         pytorch_model=model,
         onnx_model_path=onnx_model_path,
+    )
+    
+    # Display images where models disagree and save to PNG
+    display_differing_predictions(
+        differing_samples, 
+        n=4, 
+        save_path="model_differences.png"
     )

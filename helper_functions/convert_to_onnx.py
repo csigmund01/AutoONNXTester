@@ -39,7 +39,7 @@ def convert_to_onnx(model, input_shape=(3, 224, 224), batch_size=1):
             input_tensor,
             results["onnx_path"],
             export_params=True,
-            opset_version=13,
+            opset_version=14,
             do_constant_folding=True,
             input_names=['input'],
             output_names=['output'],
