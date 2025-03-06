@@ -1,4 +1,4 @@
-from helper_functions.test_onnx_conversion import test_onnx_conversion
+from helper_functions.convert_to_onnx import convert_to_onnx
 from helper_functions.static_model_analysis import static_model_analysis
 from helper_functions.compare_models import compare_models
 
@@ -15,12 +15,7 @@ def print_analysis_results(results, label="ANALYSIS RESULTS"):
     print("\n" + "="*60)
     print(f" {label} ")
     print("="*60)
-    
-    # Print basic model information if available
-    # if "model_name" in results:
-    #     print(f"\nModel: {results['model_name']}")
-    
-    # Print conversion status if available
+
     if "conversion_success" in results:
         print(f"Conversion Success: {results['conversion_success']}")
     
@@ -55,29 +50,18 @@ def onnx_debugger(model, input_shape=None, batch_size=1):
         batch_size: Batch size for test input
     """
     # Run static code analysis first
-    static_issues = static_model_analysis(model, input_shape, batch_size)
-    print_analysis_results(static_issues, "STATIC ANALYSIS RESULTS")
+    #static_issues = static_model_analysis(model, input_shape, batch_size)
+    #print_analysis_results(static_issues, "STATIC ANALYSIS RESULTS")
+    
     # Then run conversion and inference tests
-    conversion_issues = test_onnx_conversion(model, input_shape, batch_size)
+    conversion_issues = convert_to_onnx(model, input_shape, batch_size)
     print(conversion_issues)
     print_analysis_results(conversion_issues, "CONVERSION ANALYSIS RESULTS")
     if not conversion_issues["conversion_success"]:
         return
     
     compare_models(model, conversion_issues["onnx_path"])
-
-
-
-# Example MNIST usage
-# if __name__ == "__main__":
-#     # Import the MNIST model from separate file
-#     from models.mnist_model import MNISTClassifier
     
-#     # Create and test the model
-#     model = MNISTClassifier()
-    
-#     # MNIST images are 1x28x28
-#     onnx_debugger(model, input_shape=(1, 28, 28))
 
 if __name__ == "__main__":
 
