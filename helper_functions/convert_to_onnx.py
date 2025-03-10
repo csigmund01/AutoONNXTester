@@ -1,7 +1,8 @@
 import torch
 import onnx
+from onnxruntime.quantization import quantize_dynamic, QuantType
 
-def convert_to_onnx(model, input_shape=(3, 224, 224), batch_size=1):
+def convert_to_onnx(model, processor, batch_size=1):
     """
     Convert a PyTorch model to ONNX format and check for conversion issues.
     
@@ -13,26 +14,29 @@ def convert_to_onnx(model, input_shape=(3, 224, 224), batch_size=1):
     Returns:
         Dictionary with conversion results and issue information
     """
-    # Set model to evaluation mode
-    model.eval()
     
-    # Check for CUDA availability
+    # Set up device and model
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.eval()
     model = model.to(device)
     
-    # Create random input tensor
+    # Create input based on processor requirements
+    input_shape = (3, processor.size["height"], processor.size["width"])
+    batch_size = 1
+    
+    # Create input tensor
     input_tensor = torch.randn((batch_size,) + input_shape).to(device)
     
     # Initialize results
     results = {
-        "model_name": type(model).__name__,
+        "model_name": "nateraw/food",
         "conversion_success": False,
         "issues": [],
         "onnx_path": "converted_model.onnx",
         "device": device
     }
     
-    # Step 1: Convert model to ONNX
+    # Convert model to ONNX
     try:
         torch.onnx.export(
             model,
@@ -52,7 +56,8 @@ def convert_to_onnx(model, input_shape=(3, 224, 224), batch_size=1):
         # Verify the model
         onnx.checker.check_model(onnx.load(results["onnx_path"]))
         results["conversion_success"] = True
-        
+
+    
     except Exception as e:
         error_msg = str(e)
         results["conversion_success"] = False

@@ -52,13 +52,21 @@ def onnx_debugger(model, input_shape=None, batch_size=1):
     if not conversion_issues["conversion_success"]:
         return
     
-    compare_models(model, conversion_issues["onnx_path"])
+    compare_models(model, processor, conversion_issues["onnx_path"])
 
 
 if __name__ == "__main__":
-    import torchvision.models as models
-    
-    # Load pre-trained ViT model
-    model = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
-    
-    onnx_debugger(model, input_shape=(3, 224, 224))
+    # import torchvision.models as models
+    # import torch 
+
+    # model = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
+    # model.fc = torch.nn.Linear(model.fc.in_features, 101)
+
+    from transformers import AutoImageProcessor, AutoModelForImageClassification
+
+    # processor = AutoImageProcessor.from_pretrained("nateraw/food")
+    # model = AutoModelForImageClassification.from_pretrained("nateraw/food")
+    processor = AutoImageProcessor.from_pretrained("Ahmed9275/Vit-Cifar100")
+    model = AutoModelForImageClassification.from_pretrained("Ahmed9275/Vit-Cifar100")
+
+    onnx_debugger(model, processor)
